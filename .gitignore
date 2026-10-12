@@ -1,0 +1,11 @@
+# ---- 运行 / 校准产物（含本地坐标、OCR 结果、日志，不应入库）----
+_calib_*.png
+wb_gift_dry_output.txt
+wb_gift_setup.log
+wb_gift.log
+wb_gift.err
+wb_gift_learn.json
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble

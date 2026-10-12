@@ -1,0 +1,16 @@
+#!/bin/sh
+# WB积分领取.app · runner（动态定位，便于分享/迁移到任意机器）
+# 由 launchd 通过 `open -a` 启动，运行在用户 GUI 会话中，
+# 因此能继承本 .app 被授予的「屏幕录制 / 辅助功能」TCC 权限。
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+export PYTHONPATH=""
+
+# runner 位于 .app/Contents/MacOS/runner → 上两级是 .app 目录
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT="$APP_DIR/wb_gift_claimer_mac.py"
+LOG="$APP_DIR/wb_gift_app.log"
+
+# 优先用 WorkBuddy 自带 managed python，否则回退到系统 python3
+PY="$HOME/.workbuddy/binaries/python/versions/3.13.12/bin/python3"
+[ -x "$PY" ] || PY="$(command -v python3)"
+exec "$PY" "$SCRIPT" >>"$LOG" 2>&1
