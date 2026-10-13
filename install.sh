@@ -1,7 +1,8 @@
 #!/bin/bash
 # WorkBuddy 积分自动领取 · 一键安装（macOS）
 # 用法：bash install.sh
-# 完成：①装 Python 依赖 ②赋可执行权限 ③写入 launchd 定时(每天00:05+登录补领) ④引导授权
+# 完成：①装 Python 依赖 ②赋可执行权限 ③写入 launchd 周期任务(每10分钟+登录时检查) ④引导授权
+# 说明：脚本内置「智能不打扰守卫」——你正在用电脑 / 锁屏时会自动跳过，空闲时才领取，不会抢鼠标
 
 set -e
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,7 +33,7 @@ echo "✅ 完成"
 
 # ---------- 3) launchd 定时任务 ----------
 echo
-echo "【3/4】写入定时任务（每天 00:05 + 登录补领）…"
+echo "【3/4】写入定时任务（每 10 分钟周期检查 + 登录时检查 + 智能不打扰守卫）…"
 PLIST_DST="$HOME/Library/LaunchAgents/com.workbuddy.giftclaim.plist"
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST_DST" <<EOF
@@ -48,11 +49,8 @@ cat > "$PLIST_DST" <<EOF
         <string>-a</string>
         <string>$SKILL_DIR/WB积分领取.app</string>
     </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key><integer>0</integer>
-        <key>Minute</key><integer>5</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>600</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>WorkingDirectory</key>
@@ -82,6 +80,7 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null \
 
 echo
 echo "✅ 安装完成！"
-echo "  • 手动领取 ：双击 『领取积分.command』"
-echo "  • 每天自动 ：每天 00:05 自动领取（登录时若昨晚没领会补领）"
+echo "  • 手动领取 ：双击 『领取积分.command』（或 open -a \"$SKILL_DIR/WB积分领取.app\"）"
+echo "  • 每天自动 ：每 10 分钟检查一次，你空闲(≥180s 无操作)且未锁屏时自动领取，错过不漏"
+echo "             （登录时会立即检查一次；正在用电脑/锁屏则自动跳过，绝不会抢鼠标）"
 echo "  • 立即验证 ：open -a \"$SKILL_DIR/WB积分领取.app\""

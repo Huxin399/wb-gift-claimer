@@ -90,6 +90,10 @@ WAIT_CLICK   = 1.0
 RETRY_INTERVAL = 180  # 失败重试间隔（秒）= 3 分钟
 MAX_RETRIES  = 3
 
+# 🛡️ 不打扰用户守卫：用户至少空闲这么久（秒）才动手，避免打断正在操作
+#   建议 120~300 秒。设太小（如 5 秒）可能你刚停手就弹窗；设太大则可能一直不触发。
+IDLE_THRESHOLD = 180
+
 pyautogui.FAILSAFE = True   # 鼠标移到屏幕四角可紧急中止
 pyautogui.PAUSE = 0.3
 
@@ -183,6 +187,45 @@ def record_ocr(d: dict, texts: list, ctx: str):
         if "领取" in t2 and t2 not in d["gift_btn_keywords"] and len(t2) <= 12:
             d["gift_btn_keywords"].insert(0, t2)
             log.info(f"[自学习] 发现可能的领取按钮文字: [{t2}]")
+
+
+# ========== 🛡️ 不打扰用户守卫（空闲 / 锁屏检测） ==========
+def get_idle_seconds() -> float:
+    """返回系统自上次键盘/鼠标输入以来的秒数（HIDIdleTime）。
+    通过 ioreg 读取，无需屏幕录制权限。取不到时返回 0（宁可跳过、不冒险打扰）。"""
+    try:
+        import re
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem"],
+                             capture_output=True, text=True, timeout=10).stdout
+        m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out)
+        if m:
+            return int(m.group(1)) / 1_000_000_000.0  # ns → s
+    except Exception:
+        pass
+    return 0.0
+
+def is_locked() -> bool:
+    """判断系统是否处于锁屏（登录界面）状态。锁屏时最前进程是 loginwindow。"""
+    try:
+        r = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to get name of first process whose frontmost is true'],
+            capture_output=True, text=True, timeout=10)
+        return r.stdout.strip().lower() == "loginwindow"
+    except Exception:
+        return False
+
+def guard_user_busy() -> bool:
+    """返回 True 表示当前不适合运行（应跳过），False 表示可安全动手。
+    锁屏、或用户最近在活跃操作 → 跳过，绝不抢鼠标/弹窗。"""
+    if is_locked():
+        log.info("[守卫] 系统处于锁屏，跳过（解锁后会再尝试补领）")
+        return True
+    idle = get_idle_seconds()
+    if idle < IDLE_THRESHOLD:
+        log.info(f"[守卫] 你正在使用电脑（空闲仅 {idle:.0f}s < {IDLE_THRESHOLD}s），本次跳过")
+        return True
+    return False
 
 
 # ========== 窗口 / 截图 / OCR ==========
@@ -506,6 +549,12 @@ def main(force=False, dry=False, screenshot_only=False):
         sp = str(SCRIPT_DIR / "_calib_screen.png")
         img.save(sp)
         log.info(f"[截图模式] 已保存到: {sp}（把它发给我，我帮你标注按钮位置）")
+        return
+
+    # 🛡️ 不打扰用户守卫：你正用电脑 / 锁屏时绝不抢鼠标（手动 --force 时跳过守卫）
+    if not force and guard_user_busy():
+        log.info("[守卫] 本次跳过，等待下一次周期检查（你空闲时自动补领）")
+        sys.stdout.write("\n[守卫] 检测到你正在使用电脑或锁屏，已自动跳过，稍后空闲时会再试。\n")
         return
 
     if not force and should_run_on_boot():
