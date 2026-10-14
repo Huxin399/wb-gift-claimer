@@ -291,7 +291,20 @@ def ocr_screen(save_path: str | None = None) -> list:
     而 pyautogui.click() 用的是逻辑坐标（1512x982）。
     若不除以缩放比，点击位置会整体偏 2 倍，永远点不到按钮。
     """
-    img = pyautogui.screenshot()
+    try:
+        img = pyautogui.screenshot()
+    except Exception as e:
+        # 最常见根因：运行本脚本的进程（WB积分领取.app / 终端）未获「屏幕录制」授权，
+        # 导致底层 screencapture 返回 exit 1。给出可操作的明确提示，避免只看到一堆堆栈。
+        msg = str(e)
+        if "screencapture" in msg or "exit status 1" in msg:
+            raise RuntimeError(
+                "截图失败：运行本脚本的进程缺少「屏幕录制」权限。\n"
+                "→ 请打开 系统设置 → 隐私与安全性 → 屏幕录制，\n"
+                "  把本程序对应的 App（WB积分领取.app 或 终端.app）加入并打勾；\n"
+                "  授予后必须完全退出并重新运行本程序权限才生效。"
+            )
+        raise
     if save_path:
         try:
             img.save(save_path)
@@ -471,9 +484,28 @@ def _log_ocr_items(results: list, tag_keywords: list, cap: int = 120):
 
 
 # ========== 主流程 ==========
+# ========== 启动权限自检 ==========
+def preflight_permissions() -> bool:
+    """快速自检：能否截图（需要屏幕录制权限）。不可用时打印明确指引并返回 False。
+    点击所需的辅助功能已在日志点击行为中验证，这里只查最容易遗漏的屏幕录制。"""
+    try:
+        pyautogui.screenshot()
+    except Exception as e:
+        msg = str(e)
+        if "screencapture" in msg or "exit status 1" in msg:
+            log.error("【权限自检】缺少「屏幕录制」权限 → 截图/OCR 会失败，无法定位领取按钮。")
+            log.error("  → 系统设置 → 隐私与安全性 → 屏幕录制 → 加入并勾选 本程序对应的 App"
+                      "（WB积分领取.app 或 终端.app），然后【完全退出本程序】重跑，权限才生效。")
+            return False
+        log.warning(f"【权限自检】截图异常（非权限问题，继续）: {msg}")
+    log.info("【权限自检】屏幕录制可用 ✅")
+    return True
+
+
 def main(force=False, dry=False, screenshot_only=False):
     log.info("=" * 50)
     log.info("WorkBuddy 每日礼包自动领取 · macOS 版 开始")
+    preflight_permissions()
 
     if dry:
         # 两阶段校准（2026-10-12 用户指正：不点 logo 就没有弹窗，
