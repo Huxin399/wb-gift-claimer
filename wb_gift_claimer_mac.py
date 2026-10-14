@@ -57,6 +57,8 @@ except ImportError as e:
 SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_FILE   = SCRIPT_DIR / "wb_gift.log"
 LEARN_FILE = SCRIPT_DIR / "wb_gift_learn.json"
+# 领取状态文件：记录最近一次成功领取日期，用于「当天只领一次」判断（比解析日志更可靠）
+CLAIM_STATE_FILE = SCRIPT_DIR / ".claimed_today"
 
 # 领取按钮候选文字（命中任意一个即点击）
 GIFT_BTN_KEYWORDS = ["领取100积分", "领取积分", "立即领取", "签到领积分", "领取礼包",
@@ -131,11 +133,31 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 def already_claimed_today() -> bool:
-    if not LOG_FILE.exists():
-        return False
-    content = LOG_FILE.read_text(encoding="utf-8", errors="replace")
+    """判断今天是否已成功领取。
+
+    优先读状态文件（领取成功时写入当天日期，最可靠）；
+    若状态文件缺失，再回退到「今天日志里出现过成功标记」的判定（兼容旧逻辑）。
+    """
     today = _today()
-    return (f"{today}  INFO  [OK]" in content) or (f"{today}  INFO  ✅" in content)
+    # 1) 状态文件首选
+    try:
+        if CLAIM_STATE_FILE.exists() and CLAIM_STATE_FILE.read_text(encoding="utf-8").strip() == today:
+            return True
+    except Exception:
+        pass
+    # 2) 日志兜底
+    if LOG_FILE.exists():
+        content = LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        if (f"{today}  INFO  [OK]" in content) or (f"{today}  INFO  ✅" in content):
+            return True
+    return False
+
+def mark_claimed_today():
+    """写入「今天已领取」状态。之后当天任何一次运行都会在首行直接跳过，不再弹窗/点击。"""
+    try:
+        CLAIM_STATE_FILE.write_text(_today(), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"写入领取状态文件失败（不影响本次领取）: {e}")
 
 def should_run_on_boot() -> bool:
     if not LOG_FILE.exists():
@@ -612,11 +634,13 @@ def main(force=False, dry=False, screenshot_only=False):
 
         if status == "claimed":
             log.info("[OK] 今日礼包已领取（之前已领）")
+            mark_claimed_today()   # 当天不再重复运行
             sys.stdout.write("\n✅ 今日礼包已领取。\n")
             save_learn(learn)
             return
         if status == "success":
             log.info("[OK] 今日礼包领取成功")
+            mark_claimed_today()   # 当天不再重复运行
             sys.stdout.write("\n✅ 今日 100 Credits 礼包已领取！\n")
             save_learn(learn)
             return

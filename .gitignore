@@ -4,7 +4,12 @@ wb_gift_dry_output.txt
 wb_gift_setup.log
 wb_gift.log
 wb_gift.err
+wb_gift_app.log
+wb_gift_launchd.out
+wb_gift_launchd.err
 wb_gift_learn.json
+# 领取状态文件：记录「今天已领」的本地日期，每台机器独立，不入库
+.claimed_today
 
 # ---- macOS ----
 .DS_Store
