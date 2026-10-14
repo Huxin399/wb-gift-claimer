@@ -5,10 +5,12 @@
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 export PYTHONPATH=""
 
-# runner 位于 .app/Contents/MacOS/runner → 上两级是 .app 目录
-APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$APP_DIR/wb_gift_claimer_mac.py"
-LOG="$APP_DIR/wb_gift_app.log"
+# runner 位于 .app/Contents/MacOS/runner
+# 路径层级：MacOS → Contents → .app（APP_DIR）→ 技能目录（SKILL_DIR，即 .app 的上一级）
+APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SKILL_DIR="$(cd "$APP_DIR/.." && pwd)"
+SCRIPT="$SKILL_DIR/wb_gift_claimer_mac.py"
+LOG="$SKILL_DIR/wb_gift_app.log"
 
 # 优先用 WorkBuddy 自带 managed python，否则回退到系统 python3
 PY="$HOME/.workbuddy/binaries/python/versions/3.13.12/bin/python3"

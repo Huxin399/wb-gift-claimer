@@ -45,9 +45,7 @@ cat > "$PLIST_DST" <<EOF
     <string>com.workbuddy.giftclaim</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/open</string>
-        <string>-a</string>
-        <string>$SKILL_DIR/WB积分领取.app</string>
+        <string>$SKILL_DIR/WB积分领取.app/Contents/MacOS/runner</string>
     </array>
     <key>StartInterval</key>
     <integer>600</integer>
@@ -56,9 +54,9 @@ cat > "$PLIST_DST" <<EOF
     <key>WorkingDirectory</key>
     <string>$SKILL_DIR</string>
     <key>StandardOutPath</key>
-    <string>$SKILL_DIR/wb_gift.log</string>
+    <string>$SKILL_DIR/wb_gift_launchd.out</string>
     <key>StandardErrorPath</key>
-    <string>$SKILL_DIR/wb_gift.err</string>
+    <string>$SKILL_DIR/wb_gift_launchd.err</string>
     <key>AbandonProcessGroup</key>
     <true/>
 </dict>
