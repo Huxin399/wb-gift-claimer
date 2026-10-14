@@ -525,6 +525,14 @@ def preflight_permissions() -> bool:
 
 
 def main(force=False, dry=False, screenshot_only=False):
+    # 🛑 快速短路：今天已领取 → 立刻停止，连截图/权限检查都不做（真正"当天零操作"）。
+    #    放在最前，避免无谓唤醒时还去截屏、写日志，给你"还在跑"的错觉。
+    #    （仅 --force 可绕过，用于测试或手动补领。）
+    if not force and already_claimed_today():
+        log.info("今日已领取，跳过 ✅（当年不再进行任何截图/点击操作）")
+        sys.stdout.write("\n今日已领取，无需重复操作。\n")
+        return
+
     log.info("=" * 50)
     log.info("WorkBuddy 每日礼包自动领取 · macOS 版 开始")
     preflight_permissions()
