@@ -305,6 +305,29 @@ def activate_workbuddy():
     time.sleep(1.0)
 
 
+def get_wb_window_bounds():
+    """读取 WorkBuddy 主窗口的 {x, y, w, h}（逻辑坐标）。失败返回 None。
+
+    教训（2026-10-15）：WorkBuddy 不一定全屏——它可能是个浮动窗口（实测
+    position 114,91 size 1200x801），固定屏幕比例坐标会随窗口位置漂移失效。
+    头像 logo 应相对【窗口】定位，而不是相对【屏幕】。
+    """
+    try:
+        r = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to tell process "WorkBuddy" '
+             'to get {position, size} of window 1'],
+            capture_output=True, text=True, timeout=10)
+        nums = [int(float(v)) for v in r.stdout.replace("\n", " ").split(",") if v.strip()]
+        if len(nums) == 4:
+            x, y, w, h = nums
+            log.info(f"WB 窗口边界: pos=({x},{y}) size={w}x{h}")
+            return (x, y, w, h)
+    except Exception as e:
+        log.warning(f"读取 WB 窗口边界失败（回退到屏幕比例坐标）: {e}")
+    return None
+
+
 def ocr_screen(save_path: str | None = None) -> list:
     """截全屏并 OCR，返回 [(cx, cy, text, score), ...]，坐标已换算成逻辑点。
 
@@ -418,76 +441,101 @@ def try_claim_once(learn: dict) -> str:
     W, H = pyautogui.size()
     log.info(f"屏幕尺寸: {W}x{H}")
 
-    for idx, (xr, yr) in enumerate(learn["logo_candidates"]):
-        ax = int(W * xr); ay = int(H * yr)
-        log.info(f"点击左下角 logo 候选#{idx+1} @ ({ax},{ay}) [比例 {xr:.0%},{yr:.0%}]")
-        pyautogui.click(ax, ay)
-        time.sleep(WAIT_PANEL)
+    # 候选列表：优先用【相对 WB 窗口】算出的头像位置（实测头像在窗口左下角
+    # 偏移约 (+36, -38)；2026-10-15 诊断发现窗口浮动时固定屏幕比例会失效），
+    # 再回退到历史屏幕比例候选。
+    bounds = get_wb_window_bounds()
+    candidates = []
+    if bounds:
+        wx, wy, ww, wh = bounds
+        ax0, ay0 = wx + 36, wy + wh - 38
+        candidates.append((ax0, ay0, "窗口相对"))
+        log.info(f"窗口相对头像坐标: ({ax0},{ay0})")
+    for (xr, yr) in learn["logo_candidates"]:
+        candidates.append((int(W * xr), int(H * yr), f"比例 {xr:.0%},{yr:.0%}"))
 
-        results = ocr_screen()
-        texts = [r[2] for r in results]
-        record_ocr(learn, texts, "gift_search")
+    for idx, (ax, ay, tag) in enumerate(candidates):
+        # 先做一次"焦点点击"（标题栏中部，无交互元素）：Electron 冷启动后
+        # 首次点击常被用于激活窗口而不触发按钮（2026-10-15 全天失败根因）。
+        if bounds:
+            fx, fy = bounds[0] + bounds[2] // 2, bounds[1] + 12
+            pyautogui.click(fx, fy)
+            time.sleep(0.8)
 
-        # 系统授权框（TCC）挡路检查：出现会让一切点击无效（仅短文本块才算，避免聊天正文误判）
-        tcc = find_tcc_dialog(results)
-        if tcc:
-            log.error(f"检测到系统授权弹窗挡在屏幕上: [{tcc[2]}] @ ({tcc[0]},{tcc[1]})。"
-                      "请在系统设置里完成授权、关掉该弹窗后重跑。本次中止。")
-            return "fail"
+        log.info(f"点击头像 候选#{idx+1} @ ({ax},{ay}) [{tag}]")
+        for attempt in (1, 2):  # 同一坐标最多点两次：第 1 次可能只激活窗口
+            pyautogui.click(ax, ay)
+            time.sleep(WAIT_PANEL)
 
-        popup_open = find_button(results, POPUP_KEYWORDS) is not None
-        log.info(f"弹窗（buddy 加油站）状态: {'已打开' if popup_open else '未打开'}")
+            results = ocr_screen()
+            texts = [r[2] for r in results]
+            record_ocr(learn, texts, "gift_search")
 
-        # 先判断是否已领取（可能在弹窗内直接显示）
-        claimed = find_button(results, learn["claimed_keywords"], max_len=12)
-        if claimed:
-            log.info(f"检测到已领取标识: [{claimed[2]}]，今天已领过")
-            return "claimed"
+            # 系统授权框（TCC）挡路检查：出现会让一切点击无效（仅短文本块才算，避免聊天正文误判）
+            tcc = find_tcc_dialog(results)
+            if tcc:
+                log.error(f"检测到系统授权弹窗挡在屏幕上: [{tcc[2]}] @ ({tcc[0]},{tcc[1]})。"
+                          "请在系统设置里完成授权、关掉该弹窗后重跑。本次中止。")
+                return "fail"
 
-        # 找「领取」按钮（必须是独立短按钮，防止聊天正文误命中）
-        hit = find_button(results, learn["gift_btn_keywords"])
-        if hit:
-            log.info(f"OCR 命中领取按钮: [{hit[2]}] @ 屏幕({hit[0]},{hit[1]})")
-            pyautogui.click(hit[0], hit[1])
-            time.sleep(WAIT_CLICK)
-            pyautogui.press("escape")
-            time.sleep(0.5)
-            # 二次确认
-            res2 = ocr_screen()
-            if find_keyword(res2, learn["claimed_keywords"]):
-                return "success"
-            log.info("已点击领取按钮，标记成功（如未到账请手动确认）")
-            return "success"
+            popup_open = find_button(results, POPUP_KEYWORDS) is not None
+            log.info(f"弹窗（buddy 加油站）状态: {'已打开' if popup_open else '未打开'}")
 
-        # OCR 没认出「领取」短按钮，但弹窗已开 → 用焊死坐标兜底点一次
-        if popup_open:
-            for (xr, yr) in CLAIM_BUTTON_CANDIDATES:
-                bx, by = int(W * xr), int(H * yr)
-                log.info(f"OCR 未命中领取按钮，使用焊死兜底坐标 ({bx},{by}) [比例 {xr:.3f},{yr:.3f}] 点击")
-                pyautogui.click(bx, by)
+            # 先判断是否已领取（可能在弹窗内直接显示）
+            claimed = find_button(results, learn["claimed_keywords"], max_len=12)
+            if claimed:
+                log.info(f"检测到已领取标识: [{claimed[2]}]，今天已领过")
+                return "claimed"
+
+            # 找「领取」按钮（必须是独立短按钮，防止聊天正文误命中）
+            hit = find_button(results, learn["gift_btn_keywords"])
+            if hit:
+                log.info(f"OCR 命中领取按钮: [{hit[2]}] @ 屏幕({hit[0]},{hit[1]})")
+                pyautogui.click(hit[0], hit[1])
                 time.sleep(WAIT_CLICK)
                 pyautogui.press("escape")
                 time.sleep(0.5)
+                # 二次确认
                 res2 = ocr_screen()
                 if find_keyword(res2, learn["claimed_keywords"]):
                     return "success"
-                log.info("兜底点击完成，标记成功（如未到账请手动确认）")
+                log.info("已点击领取按钮，标记成功（如未到账请手动确认）")
                 return "success"
 
-        if popup_open:
-            # 弹窗已开但没识别出「领取」文字（可能 OCR 漏了中文），再等 1 秒复扫一次
-            log.warning("弹窗已开但未识别到「领取」文字，1 秒后复扫")
-            time.sleep(1.0)
-            res2 = ocr_screen()
-            hit2 = find_button(res2, learn["gift_btn_keywords"])
-            if hit2:
-                pyautogui.click(hit2[0], hit2[1])
-                time.sleep(WAIT_CLICK)
-                pyautogui.press("escape")
-                return "success"
-            log.warning("复扫仍未识别，关闭弹窗换下一个 logo 坐标")
-        else:
-            log.warning(f"logo 候选#{idx+1}未触发弹窗，关闭重试")
+            if popup_open:
+                # OCR 没认出「领取」短按钮，但弹窗已开 → 用焊死坐标兜底点一次
+                for (xr, yr) in CLAIM_BUTTON_CANDIDATES:
+                    bx, by = int(W * xr), int(H * yr)
+                    log.info(f"OCR 未命中领取按钮，使用焊死兜底坐标 ({bx},{by}) [比例 {xr:.3f},{yr:.3f}] 点击")
+                    pyautogui.click(bx, by)
+                    time.sleep(WAIT_CLICK)
+                    pyautogui.press("escape")
+                    time.sleep(0.5)
+                    res2 = ocr_screen()
+                    if find_keyword(res2, learn["claimed_keywords"]):
+                        return "success"
+                    log.info("兜底点击完成，标记成功（如未到账请手动确认）")
+                    return "success"
+            elif attempt == 1:
+                log.warning(f"候选#{idx+1} 第 1 次点击未触发弹窗（可能仅激活了窗口），再点一次")
+                continue
+            else:
+                log.warning(f"头像候选#{idx+1}未触发弹窗，换下一个坐标")
+
+            # 弹窗已开但没识别出「领取」文字 → 1 秒后复扫一次，不行就换坐标
+            if popup_open:
+                log.warning("弹窗已开但未识别到「领取」文字，1 秒后复扫")
+                time.sleep(1.0)
+                res2 = ocr_screen()
+                hit2 = find_button(res2, learn["gift_btn_keywords"])
+                if hit2:
+                    pyautogui.click(hit2[0], hit2[1])
+                    time.sleep(WAIT_CLICK)
+                    pyautogui.press("escape")
+                    return "success"
+                log.warning("复扫仍未识别，关闭弹窗换下一个头像坐标")
+
+            break  # 该候选已尝试 2 次或弹窗异常，换下一个候选
 
         pyautogui.press("escape")
         time.sleep(1.0)
